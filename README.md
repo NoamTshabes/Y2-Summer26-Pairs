@@ -144,6 +144,8 @@ Describe how you imagine the app to look, and mention the specific features you 
 > 💡 Remember
 > Remember what we talked about in our previous sessions about clarity, feedback, and focus? Make sure to keep those in mind when prompting!
 
+! []
+
 ## Milestone 6 — Test and Improve
 
 Test your complete application like a real user.
