@@ -85,7 +85,7 @@ function getClient(): Anthropic {
   if (anthropicClient) return anthropicClient
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || import.meta.env.ANTHROPIC_API_KEY
   const baseURL = import.meta.env.VITE_ANTHROPIC_BASE_URL || import.meta.env.ANTHROPIC_BASE_URL
-  anthropicClient = new Anthropic({ apiKey, baseURL })
+  anthropicClient = new Anthropic({ apiKey, baseURL dangerouslyAllowBrowser: true })
   return anthropicClient
 }
 
