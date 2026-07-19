@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { supabase, parseSections, type AgentId, type ChatMessage, type ParsedSections } from './lib/supabase'
+import { parseSections, type AgentId, type ParsedSections } from './lib/parse'
 import { callAgent } from './lib/agents'
 import { exportToPdf } from './lib/pdf'
 
