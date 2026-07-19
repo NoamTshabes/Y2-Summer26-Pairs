@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { parseSections, type AgentId, type ParsedSections } from './lib/parse'
-import { callAgent } from './lib/agents'
-import { exportToPdf } from './lib/pdf'
+import Anthropic from '@anthropic-ai/sdk'
+import { jsPDF } from 'jspdf'
+
+// ---- Types ----
+type AgentId = 'agent1' | 'agent2'
+
+interface ParsedSections {
+  summary: string | null
+  response: string | null
+  nextStep: string | null
+  raw: string
+}
+
+interface AgentResponse {
+  content: string
+  ok: boolean
+  error?: string
+}
 
 interface AgentMeta {
   id: AgentId
@@ -15,6 +30,134 @@ interface AgentMeta {
   avatar: string
 }
 
+type LocalMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+}
+
+// ---- parseSections ----
+const SECTION_PATTERNS: Array<{ key: keyof Omit<ParsedSections, 'raw'>; re: RegExp }> = [
+  { key: 'summary', re: /\[Summary\]\s*:?\s*([\s\S]*?)(?=\n\[(?:Response|Next Step)\]|$)/i },
+  { key: 'response', re: /\[Response\]\s*:?\s*([\s\S]*?)(?=\n\[(?:Summary|Next Step)\]|$)/i },
+  { key: 'nextStep', re: /\[Next Step\]\s*:?\s*([\s\S]*?)(?=\n\[(?:Summary|Response)\]|$)/i },
+]
+
+function parseSections(text: string): ParsedSections {
+  const parsed: ParsedSections = { summary: null, response: null, nextStep: null, raw: text }
+  for (const { key, re } of SECTION_PATTERNS) {
+    const m = text.match(re)
+    if (m && m[1]) parsed[key] = m[1].trim()
+  }
+  return parsed
+}
+
+// ---- callAgent ----
+const SYSTEM_PROMPTS: Record<AgentId, string> = {
+  agent1: `WHO YOU ARE: You are The Training Programmer, an elite physical performance coach.
+WHAT YOU DO: You design structured weekly workout splits tailored entirely to the user's specific physical goals, fitness level, and training availability.
+WHAT YOU WILL NOT DO: You will not provide dietary, nutritional, or medical advice.
+
+You MUST format your response using EXACTLY these three sections:
+[Summary]: one sentence repeating what the user asked
+[Response]: the main answer containing the workout split
+[Next Step]: one concrete action the user can take`,
+  agent2: `WHO YOU ARE: You are The Performance Nutritionist.
+WHAT YOU DO: You analyze workout splits to calculate appropriate daily macros and calories. You output a matching daily meal plan and grocery list that strictly adheres to the user's stated goals, dietary restrictions, and personal food preferences.
+WHAT YOU WILL NOT DO: You will not prescribe exercise routines or medical treatments.
+
+You MUST format your response using EXACTLY these three sections:
+[Summary]: one sentence repeating what the user asked
+[Response]: the main answer containing the meal plan and grocery list
+[Next Step]: one concrete action the user can take`,
+}
+
+const MAX_TOKENS: Record<AgentId, number> = {
+  agent1: 600,
+  agent2: 2400,
+}
+
+const MODEL = 'claude-haiku-4-5-20251001'
+
+let anthropicClient: Anthropic | null = null
+
+function getClient(): Anthropic {
+  if (anthropicClient) return anthropicClient
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || import.meta.env.ANTHROPIC_API_KEY
+  const baseURL = import.meta.env.VITE_ANTHROPIC_BASE_URL || import.meta.env.ANTHROPIC_BASE_URL
+  anthropicClient = new Anthropic({ apiKey, baseURL })
+  return anthropicClient
+}
+
+function formatError(msg: string, detail?: string): string {
+  return `[Summary]: Error executing request.\n[Response]: ${msg}${detail ? ` — ${detail}` : ''}\n[Next Step]: Check API configuration.`
+}
+
+async function callAgent(agent: AgentId, userText: string): Promise<AgentResponse> {
+  try {
+    const anthropic = getClient()
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS[agent],
+      system: SYSTEM_PROMPTS[agent],
+      messages: [{ role: 'user', content: userText }],
+    })
+    const text = Array.isArray(response.content) && response.content[0]?.type === 'text'
+      ? response.content[0].text
+      : ''
+    if (!text) {
+      return { content: formatError('No text returned from model'), ok: false, error: 'empty' }
+    }
+    return { content: text, ok: true }
+  } catch (e: any) {
+    return { content: formatError('API Error', e?.message || String(e)), ok: false, error: e?.message }
+  }
+}
+
+// ---- exportToPdf ----
+function exportToPdf(text: string, filename = 'The_Blueprint.pdf'): void {
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
+  const margin = 48
+  const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  const maxWidth = pageWidth - margin * 2
+  let y = margin
+
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(16)
+  pdf.setTextColor(15, 31, 56)
+  pdf.text("The Athlete's Blueprint", margin, y)
+  y += 22
+
+  pdf.setDrawColor(34, 211, 166)
+  pdf.setLineWidth(2)
+  pdf.line(margin, y - 6, margin + 60, y - 6)
+  y += 10
+
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(11)
+  pdf.setTextColor(40, 55, 80)
+
+  const lines = text.split('\n')
+  const lineHeight = 14
+
+  for (const rawLine of lines) {
+    const clean = rawLine.replace(/[^\x00-\x7F]/g, (c) => c.replace(/[^\x20-\x7E]/g, '?'))
+    const wrapped = pdf.splitTextToSize(clean === '' ? ' ' : clean, maxWidth)
+    for (const ln of wrapped) {
+      if (y > pageHeight - margin) {
+        pdf.addPage()
+        y = margin
+      }
+      pdf.text(ln, margin, y)
+      y += lineHeight
+    }
+  }
+
+  pdf.save(filename)
+}
+
+// ---- Agent metadata ----
 const AGENTS: AgentMeta[] = [
   {
     id: 'agent1',
@@ -52,12 +195,7 @@ const AGENTS: AgentMeta[] = [
   },
 ]
 
-type LocalMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-}
-
+// ---- App ----
 export default function App() {
   const [active, setActive] = useState<AgentId>('agent1')
   const [messagesByAgent, setMessagesByAgent] = useState<Record<AgentId, LocalMessage[]>>({
