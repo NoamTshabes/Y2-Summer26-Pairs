@@ -3,7 +3,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from fpdf import FPDF
 
-load_dotenv()
+load_dotenv() 
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 def export_to_pdf(text_content, filename="The_Blueprint.pdf"):
